@@ -8,9 +8,12 @@
 ///////     WANG Yanfei      54014697                /////////
 ///////     YANG Siyue       54381055                /////////
 //////////////////////////////////////////////////////////////
+
 import java.awt.*;
+import java.util.*;
 import gab.opencv.*;
 import processing.video.*;
+
 
 import org.opencv.core.Core;
 import org.opencv.core.Mat;
@@ -27,17 +30,13 @@ import org.opencv.core.MatOfPoint;
 OpenCV opencv;
 Capture cam;
 Movie movie;
+Movie movieJr;
 
-//wang yanfei
-ArrayList<Contour> contours;
+//global vars for gesture detection 
 Contour hand;
-
 PImage src,dst, hist, histMask;
-
-ArrayList<Contour> polygons;
-
+ArrayList<Contour> contours;
 ArrayList<PVector> defectPoints;
-ArrayList<Float> depths;
 ArrayList<PVector> fingerPoints;
 
 Contour convexHull;
@@ -45,21 +44,40 @@ PVector hullCenter;
 
 Mat skinHistogram;
 
-//camera
+//camera attributes
 int camWidth = 320;
 int camHeight = 240;
+
 PGraphics glow;
 
 PFont ARB, IMP, Arial, bold; //start screen title
+PImage yourface;
 PImage bkg, bkg2, raise, braise;//img cover
+PImage wraisel, wraiser, greenraise;
 PImage pagefoot, pagefoot2, pagefoot3; //footpage img
-PImage lefthand, righthand, uphand, downhand; //hand img
+PImage lefthand, righthand, stophand, twohand, modehand; //hand img
+PImage upload, scan;
 PImage setting, file; //icons
 PImage glowselect;
 PImage p1, p2, p3, p4, p5, p6; //slides
 PImage ppt1, ppt2, ppt3, ppt4, ppt5;
-PImage timer, navigator, language, handmode;
+PImage timer, navigator, language, handmode, keyboard;
 
+//static fields
+static int GC_ERROR = -1;
+static int GC_DEFAULT = 0;
+static int GC_RIGHT = 1;
+static int GC_LEFT = 2;
+static int GC_VICTORY = 3;
+static int GC_BYE = 4;
+
+//control logic modules
+int flag = GC_DEFAULT;//for ingterface control
+int gFlag = GC_DEFAULT;//for gesture detection
+int msgFlag = GC_DEFAULT;//for showing message
+
+boolean successreg = false; //the rasing hand image turns to green
+boolean lefthandmode = false;
 
 boolean glue = false;  //to control the glue rect to display
 boolean select = false;  //to show the select interface
@@ -68,56 +86,79 @@ boolean lastFile = false;
 boolean practice = false;
 boolean presen = false;
 boolean rolling = false; //tutorial rolling plane
-boolean selectfile = false;
-boolean lefthandmode = false;
 
+boolean startDetect = true;
+
+//main menu
+boolean selectfile = false;
+boolean tutorial = false;
+boolean setts = false;
 boolean handmodeselect = false;
 
-int currentPage = 0; //page
-float transp = 0;
+//presentation
+boolean next = false;
+boolean large = false;
+
+int currentPage = 6; //pageP
+//float transp = 0;
 int x = 0;
 int chooseFileCount = 0;
 int rollingCount = 0;
 int largeCount = 0;
+int preCount = 0;
 
-int successreg = 0; //the rasing hand image turns to green
+int pptpage = 1;
 
 void setup() {
 	size(1000, 600);
 	background(0);
 	textAlign(CENTER, CENTER);
 	
-	frameRate(20);
+	frameRate(60);
 	
+  //initialize webcam input
 	cam = new Capture(this, camWidth, camHeight);
 	cam.start();
   src = new PImage(camWidth, camHeight,RGB);
-	//opencv = new OpenCV(this, camWidth, camHeight);
-	//opencv.loadCascade(OpenCV.CASCADE_FRONTALFACE);
 	
-	movie = new Movie(this, "moivefile.MP4");
+	//movie = new Movie(this, "moivefile.MP4");
+  movie = new Movie(this, "filedemo.mov");
+  movieJr = new Movie(this, "presendemo.mov");
+  movieJr.loop();
 	movie.loop();
 	
+  //load fonts 
 	ARB = loadFont("ARBERKLEY-48.vlw");
 	IMP = loadFont("Calibri-48.vlw");
 	Arial = loadFont("ArialMT-48.vlw");
 	bold = loadFont("ArialRoundedMTBold-48.vlw");
 	
+  //load images
 	bkg = loadImage("background.jpg");
 	bkg2 = loadImage("bkg2.jpg");
-	raise = loadImage("face.png");
-	braise = loadImage("face.png");
+  yourface = loadImage("smile.png");
+	raise = loadImage("raisinghand.png");
+	braise = loadImage("blackraising.png");
 	pagefoot = loadImage("pagefoot.png");
 	pagefoot2 = loadImage("pagefoot2.png");
 	pagefoot3 = loadImage("pagefoot3.png");
+
+	wraisel = loadImage("whiteraisingleft.png");
+	wraiser = loadImage("whiteraisingright.png");
+  greenraise = loadImage("greenraisingright.png");
 	
 	setting = loadImage("gearwheel.png");
 	file = loadImage("fileselect.png");
 	glowselect = loadImage("glowselect.png");
+
+  upload = loadImage("upload.png");
+  scan = loadImage("scan.png");
 	
 	lefthand = loadImage("lefthand.png");
 	righthand = loadImage("righthand.png");
-	uphand = loadImage("stophand.png");
+  stophand = loadImage("handicon.png");
+  twohand = loadImage("handvictory.png");
+  modehand = loadImage("handlove.png");
 	
 	p1 = loadImage("ppt1.jpg");
 	p2 = loadImage("ppt2.jpg");
@@ -136,6 +177,7 @@ void setup() {
 	navigator = loadImage("navigator.png");
 	language = loadImage("language.png");
 	handmode = loadImage("handmode.png");
+  keyboard = loadImage("keyboard.png");
 
 	glow = createGraphics(width, height, JAVA2D);
 	glow.beginDraw();
@@ -151,16 +193,31 @@ void setup() {
 
 void draw(){
   if(cam.available())cam.read();
+  else msgFlag = GC_ERROR;
+  
 	//the first page 
 	if (currentPage == 0) {
-		
 		tint(200);
+    noStroke(); 
 		image(bkg, 0, 0, width, height);
 		Cover();
-		
+    
+    fill(125);
+    rect(70,25,400,50,12);
+    textFont(IMP,20);
+    fill(255);
+    if(msgFlag==GC_ERROR){
+      fill(255,0,0);
+      text("!!! Cannot detect camera !!!",270,50);
+    }else{
+      text("//CS3483 PROJECT DEMO//",270,50);
+    }
+    
 	} 
 	else if (currentPage == 1) {
+    noStroke(); 
 		Tutorial();
+    
 	}
 	else if (currentPage == 2){
 		tint(255);
@@ -168,29 +225,60 @@ void draw(){
 		fill(255);
 		rect(0, 0, width, height);
 		Menu();  
+    fill(125);
+    rect(70,25,400,50,12);
+    textFont(IMP,20);
+    fill(255);
+    text("//CS3483 PROJECT DEMO//",270,50);
+    
 	}
 	else if (currentPage == 3) {
-		frameRate(20);
+		frameRate(60);
 		tint(255);
 		noStroke();
 		fill(64);
 		rect(0, 0, width, height);
 		ModeSelection();
+    fill(125);
+    rect(70,25,400,50,12);
 	}
 	else if (currentPage == 4) {
-		frameRate(20);
+		frameRate(60);
 		tint(255);
+    noStroke(); 
 		fill(255);
 		rect(0, 0, width, height);
 		Settings();
+    
 	}
 	else if (currentPage == 5) {
-		frameRate(20);
+		frameRate(60);
 		tint(255);
+    noStroke(); 
 		fill(64);
 		rect(0, 0, width, height);
 		Practice();
+    fill(125);
+    rect(70,15,400,50,12);
+    textFont(IMP,20);
+    fill(255);
+    text("//CS3483 PROJECT DEMO//",270,40);
 	}
+  else if (currentPage == 6) {
+    frameRate(60);
+    tint(255);
+    noStroke(); 
+    fill(64);
+    rect(0, 0, width, height);
+    pptpage = 1;
+    Presentation();
+    
+    fill(125);
+    rect(70,15,400,50,12);
+    textFont(IMP,20);
+    fill(255);
+    text("//CS3483 PROJECT DEMO//",270,40);
+  }
   
 }
 
@@ -204,59 +292,81 @@ void keyPressed() {
 	if (keyCode == UP) currentPage--;
 
 	if (currentPage == 0) {
-		if (key == 'r') successreg = 1; //if the hand is detect, 
+		if (key == 'r') successreg = true; //if the hand is detect, 
 	}
 	else if (currentPage == 1) {
+    rolling = false;
 		if (keyCode == RIGHT) rolling = true; rollingCount = 0;
 	}
 	else if (currentPage == 2) {
 		largeCount = 0;
 		select = false;
-		if (key == 's') {
-		selectfile = true; 
+		if (key == 'i') {
+		  selectfile = true; 
 		}
+    if (key == 't') tutorial = true;
+    if (key == 'y') setts = true;
 	}
 	else if (currentPage == 3) {
 		if(key == 'g') glue = true; //add white glow rect to the current file
 		if(key == 's') {
-		select = true; //change to the mode selection mode
+		  select = true; //change to the mode selection mode
 		}
 		if(!select){
-		if(key == 't') currentPage = 4;
-		if(keyCode == RIGHT) nextFile = true;
-		if(keyCode == LEFT) {
-			lastFile = true;
-			nextFile = false;
-			chooseFileCount = 0;
-		}
+  		if(key == 't') currentPage = 4;
+  		if(keyCode == RIGHT) {
+        lastFile = false;
+        nextFile = true;
+        chooseFileCount = 0;
+      }
+  		if(keyCode == LEFT) {
+  			lastFile = true;
+  			nextFile = false;
+  			chooseFileCount = 0;
+  		}
 		}
 		else if(select){
-		if (keyCode == RIGHT) practice = true; presen = false;
-		if (keyCode == LEFT) presen = true; practice = true;
-		if (keyCode == ENTER) currentPage = 5;
-		}
+  		if (keyCode == RIGHT) practice = true; presen = false;
+  		if (keyCode == LEFT) presen = true; practice = true;
+  		if (keyCode == ENTER && practice) currentPage = 5;
+      if (keyCode == ENTER && presen) currentPage = 6;
+  	}
 	}
 	else if (currentPage == 4) {
 		if (key == 'h') handmodeselect = true;
+    if (keyCode == RIGHT) lefthandmode = true; else lefthandmode = false;
+    if (keyCode == UP) currentPage--;
 	} 
 	else if (currentPage == 5) {
 		if (key == 't') currentPage = 4;
 	}
+  else if (currentPage == 6) {
+    next = false;
+    large = false;
+    if (keyCode == RIGHT) {
+      preCount = 0; next = true;
+    }
+    else if (keyCode == LEFT) {
+      preCount = 0; 
+      large = true;
+    }
+  }
 }
+
 void Cover() {
-  //footpage 
-  tint(255);
-  image(pagefoot, 870, 470, 150, 150);
-  stroke(255);
-  fill(0);
-  triangle(904,600,1000,600,1000,505);
-  //hand
-  tint(230);
-  image(righthand, 925,550,80,50);
-  fill(200);
-  textFont(Arial, 20);
-  text("Show your index finger   Turn to the next page", 500, 570);
-  //blocks
+	//footpage 
+	tint(255);
+	image(pagefoot, 870, 470, 150, 150);
+	stroke(255);
+	fill(0);
+	triangle(904,600,1000,600,1000,505);
+	//hand
+	tint(230);
+	image(righthand, 925,550,80,50);
+	fill(200);
+	textFont(Arial, 20);
+	text("Show your index finger   Turn to the next page", 500, 570);
+	//blocks
   noStroke();
   fill(175,173,173,200);
   rect(100,80,350,430,20);
@@ -284,8 +394,6 @@ void Cover() {
   text("to set the hand mode", 725, 240);
   tint(255);
 
-  
-  
   OpenCV opencv_face = new OpenCV( this ,320,240); // Initialises the OpenCV object
   opencv_face.loadCascade(OpenCV.CASCADE_FRONTALFACE); // Opens a video capture stream
   OpenCV opencv_hand=new OpenCV(this, 320, 240);
@@ -301,20 +409,19 @@ void Cover() {
   image(cam,-885,260, 320,240);
   popMatrix();
   scale(1,1);
+  image(yourface, 650, 268, 140, 200);
+  
   if(faces.length>0 && hands.length>0)
-     if(hands[0].x<faces[0].x) successreg=1;
-     else successreg = 2;
+     if(hands[0].x<faces[0].x) gFlag=GC_RIGHT;
+     else gFlag = GC_LEFT;
   
-  image(raise, 650, 268, 140, 200);
-  if(successreg==0) println("Right Hand USER");
-  else println("left hand user");
-  
-  if (successreg==1) {
+
+  if (gFlag==GC_RIGHT) {
     fill(145,255,82); //green
     textFont(Arial, 20);
     text("Right hand detected!", 725, 457);
   }
-  else if (successreg==2){
+  else if (gFlag==GC_LEFT){
     fill(145,255,82); //green
     textFont(Arial, 20);
     text("Left hand detected!", 725, 457);
@@ -341,15 +448,22 @@ void Tutorial() {
 	tint(230);
 	image(righthand, 925,550,80,50);
 	
-	image(movie, 260+150+30, 100, 500, 300);
 	
-	//drawing pen
-	//fill(0);
-	//line(mouseX, mouseY, pmouseX, pmouseY);
-	
-	
-	if (rolling) rollingCount= rollingCount +2;
+  
+	if (rolling) {
+    rollingCount= rollingCount +2;
+    image(movie, 260+150+30, 100, 500, 300);
+    fill(255);
+    text("This vedio demostrates the most important workflow of this project. ", 695, 440);
+    text("When users enter the File Selection interface, they can select a the “Select”", 670, 462);
+    text("gesture and then enter the Mode Selection interface. Similarly, they can either", 668, 484);
+    text("Practice Mode or Presentation Mode again using the “Select” gesture.", 639, 506);
+  } else {
+    image(movieJr, 260+150+30, 100, 500, 300);
+  
+  }
 	fill(65);
+  noStroke();
 	ellipse(max(260-rollingCount,210), max(height/2-3*rollingCount, height/2-150), max(150-rollingCount,100),  max(150-rollingCount,100));
 	ellipse(max(210-1.7*rollingCount,110), max(height/2-150-1.5*rollingCount, 65), 100, 100);
 	ellipse(max(110-2*rollingCount, -100), max(65-2*rollingCount, -100), 100, 100);
@@ -362,11 +476,11 @@ void Tutorial() {
 	text("Presentation", max(260-rollingCount,210), max(height/2-10-3*rollingCount, height/2-10-150));
 	text("Demo", max(260-rollingCount,210), max(height/2+10-3*rollingCount, height/2-150+10));
 	textFont(IMP, 17);
-	text("Feature", max(210-1.7*rollingCount,110), max(height/2-10-150-1.5*rollingCount, 65-10));
-	text("Demo", max(210-1.7*rollingCount,110), max(height/2-150+10-1.5*rollingCount, 65+10));
+	text("Customize", max(210-1.7*rollingCount,110), max(height/2-10-150-1.5*rollingCount, 65-10));
+	text("Setting", max(210-1.7*rollingCount,110), max(height/2-150+10-1.5*rollingCount, 65+10));
 	textFont(IMP, constrain(17+rollingCount, 17, 23));
-	text("Customize", min(210+rollingCount,260), max(height/2+150-10-3*rollingCount, height/2-10));
-	text("setting",  min(210+rollingCount,260), max(height/2+150+10-3*rollingCount, height/2+10));
+	text("File Select", min(210+rollingCount,260), max(height/2+150-10-3*rollingCount, height/2-10));
+	text("Demo",  min(210+rollingCount,260), max(height/2+150+10-3*rollingCount, height/2+10));
 	textFont(IMP, 17);
 	text("Quick", max(110-2*rollingCount, -100), max(65-10-2*rollingCount, -100));
 	text("Start", max(110-2*rollingCount, -100), max(65+10-2*rollingCount, -100));
@@ -431,16 +545,51 @@ void Menu(){
 		fill(255);
 		textFont(IMP, 40+5*largeCount);
 		if (largeCount < 50) {
-		text("Select", 650, 210);
+		  text("Select", 650, 210);
 		} else {
-		currentPage = 3;
-		selectfile = false;
+		  currentPage = 3;
+		  selectfile = false;
 		}
 	}
+
+  if (tutorial) {
+    largeCount++;
+    noStroke();
+    fill(64);
+    pushMatrix();
+    polygon(400, 530, 80+10*largeCount, 6, true);  // Heptagon
+    popMatrix();
+    fill(255);
+    textFont(IMP, 30+5*largeCount);
+    if (largeCount < 40) {
+      text("Tutorial", 530, 400);
+    } else {
+      currentPage = 1;
+      tutorial = false;
+    }
+  }
+  
+  if (setts) {
+    largeCount++;
+    noStroke();
+    fill(64);
+    pushMatrix();
+    polygon(420, 780, 100+10*largeCount, 6, true);  // Heptagon
+    popMatrix();
+    fill(255);
+    textFont(IMP, 40+5*largeCount);
+    if (largeCount < 50) {
+      text("Setting", 780, 420);
+    } else {
+      currentPage = 4;
+      setts = false;
+      
+    }
+  }
 }
 
-
 void ModeSelection() {
+ 
 	//files
 	noStroke();
 	//footpage 
@@ -454,73 +603,92 @@ void ModeSelection() {
 	
 	//hand
 	fill(0);
-	
 	tint(230);
-	image(righthand, width/2 + 100,550,80,50);
-	image(lefthand, width/2 - 180,550,80,50);
-	tint(245);
-	image(uphand, width/2 - 20, 480, 40, 40);
-	
-	//interaction of choosing the left and right file
-	if (nextFile || lastFile){
-	
-		if (nextFile) {
-		chooseFileCount = chooseFileCount + 2;
-		image(p5, constrain(width-80-142-6*chooseFileCount, 80, width-80-142), 275, 142, 86);
-		image(p3, constrain(width/2+250-130+2*chooseFileCount, width/2+250-130,width-80-142), constrain(250+chooseFileCount,250,275), constrain(230-2*chooseFileCount, 142, 230), constrain(130-chooseFileCount,86, 130));  
-		image(ppt1, constrain(width/2-250+3*chooseFileCount,width/2-250,width/2+250-130), constrain(135+chooseFileCount,135,250),constrain(500-2*chooseFileCount, 230, 500), constrain(300-1.5*chooseFileCount, 130,300));  
-		//image(glow, min(5*x, 250), 0, max(1000-10*x,500), max(600-6*x, 300));  
-		image(p1, constrain(80+2*chooseFileCount, 80, 150), constrain(275-chooseFileCount,250,275), constrain(142+2*chooseFileCount, 142, 230), constrain(86+chooseFileCount,86,130)); 
-		image(p2, constrain(150+2*chooseFileCount, 150, width/2-250), constrain(250-chooseFileCount,135,250), constrain(230+2.5*chooseFileCount,230,500), constrain(130+2*chooseFileCount,130,300));     
-		} 
-		if (lastFile) {
-		chooseFileCount = chooseFileCount + 2;
-		//image(p3, constrain(width-80-142-5*chooseFileCount, 80, width-80-142), 275, 142, 86);
-		//image(p4, constrain(width/2+250-130+2*chooseFileCount, width/2+250-130,width-80-142), constrain(250+chooseFileCount,250,275), constrain(230-2*chooseFileCount, 142, 230), constrain(130-chooseFileCount,86, 130));  
-		//image(p2, constrain(width/2-250+3*chooseFileCount,width/2-250,width/2+250-130), constrain(135+chooseFileCount,135,250),constrain(500-2*chooseFileCount, 230, 500), constrain(300-1.5*chooseFileCount, 130,300));  
-		////image(glow, min(5*x, 250), 0, max(1000-10*x,500), max(600-6*x, 300));  
-		//image(p5, constrain(80+2*chooseFileCount, 80, 150), constrain(275-chooseFileCount,250,275), constrain(142+2*chooseFileCount, 142, 230), constrain(86+chooseFileCount,86,130)); 
-		//image(p1, constrain(150+2*chooseFileCount, 150, width/2-250), constrain(250-chooseFileCount,135,250), constrain(230+2.5*chooseFileCount,230,500), constrain(130+2*chooseFileCount,130,300)); 
-		image(p5, constrain(80+5*chooseFileCount, 80, width-80-142), 275, 142, 86); 
-		image(p1, constrain(150-chooseFileCount, 80, 150), constrain(250+chooseFileCount,250, 275), constrain(230-2.5*chooseFileCount,142,230), constrain(130-2*chooseFileCount,86,130));   
-		image(p3, constrain(width-80-142-chooseFileCount, width/2+250-130, width-80-142), constrain(275-chooseFileCount,250,275), constrain(142+2.5*chooseFileCount,142,230), constrain(86+2*chooseFileCount,86,130));
-		image(p2, constrain(width/2-250-3*chooseFileCount, 150, width/2-250), constrain(135+chooseFileCount,135,250),constrain(500-2*chooseFileCount, 230, 500), constrain(300-1.5*chooseFileCount,130,300));  
-		image(ppt1, constrain(width/2+250-130-2*chooseFileCount,width/2-250,width/2+250-130), constrain(250-chooseFileCount,135,250), constrain(230+2*chooseFileCount, 230, 500), constrain(130+2*chooseFileCount,130,300));  
-		if(glue) image(glow, 0, 0);  
-	}
-	
-	}
-	else {
-		chooseFileCount = 0;
-		image(p5, width-80-142, 275, 142, 86);
-		image(p3, width/2+250-130,250,230,130);
-		image(p1, 80, 275, 142, 86);
-		image(p2, 150, 250, 230, 130); 
-		if(glue) image(glow, 0, 0);  
-		else image(ppt1, width/2-250,135,500,300);    
-	}
-	
-	if (select) {
-		x++;
-		image(glowselect, 0, 0);
-		image(glow, min(5*x, 250), 0, max(1000-10*x,500), max(600-6*x, 300));
-		//plane
-		choosePlane(x, 0);
-		if (practice) choosePlane(255, 2);
-		if (presen) choosePlane(255,1);
-	}
-	
-	//fill(175,173,173,200);
-	//rect(width/2-125,80,250,400,20);
-	//beginShape();
-	//vertex(width/2 + 30, 100);
-	//vertex(width/2 + 400, 120);
-	//vertex(width/2 + 400, 400);
-	//vertex(width/2 + 30, 420);
-	//endShape();
+	image(righthand, width/2 + 100,480,80,50);
+	image(lefthand, width/2 - 180,480,80,50);
+	tint(150);
+  image(twohand, width/2 - 20, 470, 40, 50);  
+  image(upload, 215, 485, 40, 40);
+	image(stophand, 25, 25, 40, 50);
+  image(scan, 757, 490, 40, 40);
+	tint(255);
+
+  if(startDetect){
+    
+    detectGesture();
+    if(gFlag == 2){ 
+      nextFile = true;
+      lastFile = false;
+    }
+    if(gFlag == 3){
+      lastFile = true;
+      nextFile = false;
+    }
+    if(gFlag==1){
+      select = true;
+    }
+  }
+  
+  //interaction of choosing the left and right file
+  if (nextFile || lastFile){
+    startDetect = false;
+    if (nextFile) {
+      chooseFileCount = chooseFileCount + 2;
+      image(p5, constrain(width-80-142-6*chooseFileCount, 80, width-80-142), 275, 142, 86);
+      image(p3, constrain(width/2+250-130+2*chooseFileCount, width/2+250-130,width-80-142), constrain(250+chooseFileCount,250,275), constrain(230-2*chooseFileCount, 142, 230), constrain(130-chooseFileCount,86, 130));  
+      image(ppt1, constrain(width/2-250+3*chooseFileCount,width/2-250,width/2+250-130), constrain(135+chooseFileCount,135,250),constrain(500-2*chooseFileCount, 230, 500), constrain(300-1.5*chooseFileCount, 130,300));  
+      image(p1, constrain(80+2*chooseFileCount, 80, 150), constrain(275-chooseFileCount,250,275), constrain(142+2*chooseFileCount, 142, 230), constrain(86+chooseFileCount,86,130)); 
+      image(p2, constrain(150+2*chooseFileCount, 150, width/2-250), constrain(250-chooseFileCount,135,250), constrain(230+2.5*chooseFileCount,230,500), constrain(130+2*chooseFileCount,130,300));     
+    } 
+    if (lastFile) {
+      chooseFileCount = chooseFileCount + 2;
+      image(p5, constrain(80+5*chooseFileCount, 80, width-80-142), 275, 142, 86); 
+      image(p1, constrain(150-chooseFileCount, 80, 150), constrain(250+chooseFileCount,250, 275), constrain(230-2.5*chooseFileCount,142,230), constrain(130-2*chooseFileCount,86,130));   
+      image(p3, constrain(width-80-142-chooseFileCount, width/2+250-130, width-80-142), constrain(275-chooseFileCount,250,275), constrain(142+2.5*chooseFileCount,142,230), constrain(86+2*chooseFileCount,86,130));
+      image(p2, constrain(width/2-250-3*chooseFileCount, 150, width/2-250), constrain(135+chooseFileCount,135,250),constrain(500-2*chooseFileCount, 230, 500), constrain(300-1.5*chooseFileCount,130,300));  
+      image(ppt1, constrain(width/2+250-130-2*chooseFileCount,width/2-250,width/2+250-130), constrain(250-chooseFileCount,135,250), constrain(230+2*chooseFileCount, 230, 500), constrain(130+2*chooseFileCount,130,300));  
+      //if(glue) image(glow, 0, 0);  
+    }
+    if (chooseFileCount>400) {startDetect = true;println(chooseFileCount+"");}
+  } else {
+    chooseFileCount = 0;
+    image(p5, width-80-142, 275, 142, 86);
+    image(p3, width/2+250-130,250,230,130);
+    image(p1, 80, 275, 142, 86);
+    image(p2, 150, 250, 230, 130); 
+    //if(glue) image(glow, 0, 0);  
+    //else 
+      image(ppt1, width/2-250,135,500,300);    
+  }
+  
+  if (select) {
+    x++;
+    image(glowselect, 0, 0);
+    image(glow, min(5*x, 250), 0, max(1000-10*x,500), max(600-6*x, 300));
+    //plane
+    choosePlane(x, 0);
+    if (practice) choosePlane(255, 2);
+    if (presen) choosePlane(255,1);
+    detectHand();
+    if(gFlag ==2) {
+      choosePlane(255, 2); 
+      practice= true;
+      presen = false;
+      detectHand();
+      if (gFlag==1) currentPage = 5;
+    }
+    if(gFlag==3) {
+      choosePlane(255, 1); 
+      detectHand();
+      if (gFlag==1) currentPage = 6;
+    }
+  }
+
 }
 
 void Settings () {
+  tint(150);
+  image(stophand, 25, 25, 40, 50);
 	//footpage 
 	//line(width/2, 0, width/2, 600);
 	//tint(255);
@@ -537,7 +705,7 @@ void Settings () {
 	fill(0);
 	triangle(904,-1,1000,-1,1000,96);
 	tint(225);
-	image(setting, 951, 10, 40, 40);
+	//image(setting, 951, 10, 40, 40);
   
 	if (lefthandmode) {
 		//polygon
@@ -546,7 +714,20 @@ void Settings () {
 		polygon(350, 300, 300, 6, false);
 		polygon(650, 80, 65, 6, false); 
 		polygon(730, 220, 65, 6, false); 
+		if (handmodeselect) {
+			noFill();
+			stroke(64); 
+			strokeWeight(3);
+		} 
+		else {
+			noStroke();
+			fill(64);
+			strokeWeight(1);
+		}
 		polygon(650, 520, 65, 6, false); 
+		noStroke();
+		fill(64);
+		strokeWeight(1);
 		polygon(730, 380, 65, 6, false); 
 		//icons
 		noStroke(); 
@@ -554,7 +735,14 @@ void Settings () {
 		image(timer, 613, 35, 80, 70);
 		image(language, 700, 175, 80, 70);
 		image(navigator, 690, 335, 90, 80);
+		if (handmodeselect) {
+			tint(64); 
+		} 
+		else {
+			tint(255);
+		}
 		image(handmode, 615, 475, 80, 70);
+		tint(255);
 		//text
 		fill(255);
 		textFont(IMP, 23);
@@ -562,7 +750,30 @@ void Settings () {
 		textFont(IMP, 18);
 		text("Language", 730, 256);
 		text("Navigator", 733, 415);
+		if (handmodeselect) {
+			fill(64); 
+		} 
+		else {
+			fill(255);
+		}
 		text("Hand mode", 650, 555);  
+
+		fill(64);
+		noStroke();
+    
+    if (handmodeselect) {
+      polygon(350, 300, 300, 6, false);
+      image(wraiser, -200+370, 120, 100, 140);
+      image(raise, -200+605, 120, 100, 140);
+      image(keyboard, -200+460, 280, 150, 100);
+      fill(255);
+      textFont(IMP, 40);
+      text("Left hand mode", 350, 427);
+    }
+    else {
+      polygon(350, 300, 300, 6, false);
+    }
+
 	} else {
 		//polygon
 		fill(64);
@@ -592,10 +803,10 @@ void Settings () {
 		image(language, 830-700, 175, 80, 70);
 		image(navigator, 820-690, 335, 90, 80);
 		if (handmodeselect) {
-		tint(64); 
+			tint(64); 
 		} 
 		else {
-		tint(255);
+			tint(255);
 		}
 		image(handmode, 828-615, 475, 80, 70);
 		tint(255);
@@ -607,23 +818,24 @@ void Settings () {
 		text("Language", 900-730, 256);
 		text("Navigator", 900-733, 415);
 		if (handmodeselect) {
-		fill(64); 
+			fill(64); 
 		} 
 		else {
-		fill(255);
+			fill(255);
 		}
 		text("Hand mode", 900-650, 553);  
 
 		fill(64);
 		noStroke();
 		
-
 		if (handmodeselect) {
 			polygon(900-350, 300, 300, 6, false);
+			image(greenraise, 370, 120, 100, 140);
+			image(wraisel, 605, 120, 100, 140);
+      image(keyboard, 460, 280, 150, 100);
       fill(255);
-			rect(380, 138, 90, 300);
-			rect(470, 138, 90, 300);
-			rect(580, 138, 90, 300);
+      textFont(IMP, 40);
+      text("Right hand mode", 900-350, 427);
 		}
 		else {
 			polygon(900-350, 300, 300, 6, false);
@@ -632,48 +844,98 @@ void Settings () {
 }
 
 void Practice() {
+  tint(150);
+  image(stophand, 25, 15, 40, 50);
 	strokeWeight(1);
-	//footpage 
-	tint(255);
-	image(pagefoot2, 870, -30, 150, 150);
-	stroke(255);
-	fill(0);
-	triangle(904,-1,1000,-1,1000,96);
+  stroke(255);
 	tint(225);
 	image(setting, 951, 10, 40, 40);
 	
 	fill(125,125,125,200);
-	rect(10, 40, 170, 300, 12);
-	rect(190, 40, 170, 300, 12);
+	rect(25, 343, 320, 183, 12);
+	//rect(190, 40, 170, 300, 12);
 	//rect(10, 345, 350, 250, 12);
-	image(ppt1, 20, 54, 150, 90);
-	image(ppt2, 20, 150, 150, 90);
-	image(ppt3, 20, 245, 150, 90);
+	image(ppt1, 32+10, 350, 130, 80);
+  image(ppt2, 210-10, 350, 130, 80);
+	image(ppt3, 32+10, 440, 130, 80);
+  image(ppt4, 210-10, 440, 130, 80);
+	//image(ppt3, 20, 245, 150, 90);
 	
 	image(ppt1, 380, 170, 600, 350);
 	
-	rect(385, 122, 190, 40, 12); 
-	rect(590, 122, 190, 40, 12); 
-	rect(790, 122, 190, 40, 12);
+	rect(385, 88, 190, 40, 12); 
+	rect(590, 88, 190, 40, 12); 
+	rect(790, 88, 190, 40, 12);
 	
 	//rect(790, 549, 190, 40, 12);
 	
 	//text
 	fill(255);
 	textFont(Arial, 18);
-	text("Progress: 6/30", 487, 145);
-	text("10:20", 685, 145);
-	text("Next Speaker: David", 887, 145);
+	text("Progress: 6/30", 487, 145-34);
+	text("10:20", 685, 145-34);
+	text("Next Speaker: David", 887, 145-34);
 	
 	textFont(IMP, 18);
 	text("Mode: Practice", 900, 555); 
 
 	if (cam.available() == true) cam.read();
 	//opencv.loadImage(cam);
-	image(cam, 25, 350);
+	image(cam, 25, 88);
 }
 
 void Presentation() {
+  tint(150);
+  image(stophand, 25, 15, 40, 50);
+  tint(255);
+  if (next) {
+    preCount = preCount + 2;
+    image(ppt2, 90, 70, 750, 450);
+    image(ppt1, 90-preCount*6, 70, 750, 450);
+    
+    fill(64);
+    noStroke();
+    rect(0,70,90,450);
+    
+    if (preCount > 180) {
+      
+      pptpage = 2;
+    }
+  } else image(ppt1, 90, 70, 750, 450);
+  
+  
+  if (large){
+    preCount = preCount + 2;
+    image(ppt3, 90, 70, 750, 450);
+    if (preCount < 100) {
+      image(ppt2, 90-preCount, 70-preCount, 750+10*preCount, 450+6*preCount);
+    } else pptpage = 3;
+    //else large = false;
+    fill(64);
+    noStroke();
+    rect(0,70,90,460);
+    rect(0, 0, width, 70);
+    rect(840, 0, 160, height);
+    rect(0, 520, width, 90);
+  }
+  
+  
+  else if (pptpage == 2) image(ppt2, 90, 70, 750, 450);
+  else if (pptpage == 3) image(ppt3, 90, 70, 750, 450);
+  
+  
+  //footpage 
+  tint(255);
+  image(pagefoot2, 870, -30, 150, 150);
+  stroke(255);
+  fill(0);
+  triangle(904,-1,1000,-1,1000,96);
+  tint(225);
+  image(setting, 951, 10, 40, 40);
+  
+  fill(255);
+  textFont(IMP, 18);
+  text("Mode: Presentation", 900, 555); 
 }
 
 void choosePlane(int x, int pcolor) {
@@ -762,13 +1024,12 @@ void polygon(float x, float y, float radius, int npoints, boolean vertical) {
 	}
 	endShape(CLOSE);
 }
-
 // in BGR
 Scalar colorToScalar(color c){
   return new Scalar(blue(c), green(c), red(c));
 }
 
-void detectGesture(){ //<>//
+void detectGesture(){
   //removeBackground();//not effective, discard
   detectSkin();
   if(hasHand()){
@@ -782,14 +1043,14 @@ void detectGesture(){ //<>//
 void removeBackground(){
   
 }
-void detectSkin(){ //<>//
+void detectSkin(){
   
   src.loadPixels();
   cam.loadPixels();
   arrayCopy(cam.pixels,src.pixels);
   src.updatePixels();
   
-  image(cam,0,0);
+  //image(cam,0,0);
   
     opencv = new OpenCV(this, src, true);  
     skinHistogram = Mat.zeros(256, 256, CvType.CV_8UC1);
@@ -852,7 +1113,7 @@ void detectHand(){
   Imgproc.convexityDefects(points, hull, defects);
   
   defectPoints  = new ArrayList<PVector>();
-  depths =  new ArrayList<Float>(); 
+  
 
   ArrayList<Integer> defectIndices = new ArrayList<Integer>();
   
@@ -863,7 +1124,7 @@ void detectHand(){
     if (defects.get(i, 0)[3] > 10000) {
       defectIndices.add( defectIndex );
       defectPoints.add(hand.getPoints().get(defectIndex));
-      depths.add((float)defects.get(i, 0)[3]);
+      
     }
   }
   
@@ -884,55 +1145,71 @@ void detectHand(){
   noFill();
   strokeWeight(3);
   
-  switch(fingerPoints.size()){
-    case 1:
-      println("1");
+  switch(defectPoints.size()){
+    case 0:
+      if(fingerPoints.size()>0 && fingerPoints.size()<=2)
+        if(fingerPoints.get(0).x-hullCenter.x<0)
+          gFlag = 2;//next item
+        else gFlag = 3;//previous item
       break;
-    case 2:
-      println("2");
+    case 1:
+      if(fingerPoints.size()==2)
+        gFlag = 1;//confirm
+      break;
+    case 4:
+      if(fingerPoints.size()>3)
+        gFlag = 4;//wave to exit;
       break;
     default:
       println("unrecognized gesture");
       break;
-     
   }
-  println(defectPoints.size());
   
-  if(fingerPoints.size()== 2 && defectPoints.size()==1)
+  if(currentPage ==0 && gFlag==1)
     currentPage = 1;
-    //println("detect");
-  
-  if(fingerPoints.size()>0){
-  PVector p1 = fingerPoints.get(0);
-  PVector p2 = fingerPoints.get(fingerPoints.size()-1);
-  float a = hullCenter.dist(p1);
-  float c = hullCenter.dist(p2);
-  float b = p1.dist(p2);
-  double cos = (Math.pow(a,2)+Math.pow(c,2)-Math.pow(b,2))/2/a/c;
-  
-  if (Math.acos(cos)<0 ) println("detected!"); 
-  }
-
-  stroke(0,0,255);
-  noFill();
-  hand.getConvexHull().draw();
-  
-   int d = 0;
-   stroke(255,255,255);
-   for(PVector p : fingerPoints){
-     ellipse(p.x,p.y, 5, 5);
-     textSize(32);
-     text(""+d,p.x,p.y);
-     d++;
-   }
-   
-   stroke(0,0,0);
-   for(PVector p : defectPoints)
-     ellipse(p.x,p.y, 5, 5);
-   
-   
-   fill(0,255,0);
-   stroke(0,255,0);
-   ellipse(hullCenter.x, hullCenter.y, 5, 5);
-  
+    
+  //drawResults();
+ 
 }
+
+//void drawResults(){
+  
+//  image(dst,1000-cam.width,0);
+//  stroke(0,0,255);
+//  strokeWeight(1);
+//  noFill();
+//  hand.getPolygonApproximation().draw();
+//  stroke(255,0,0);
+//  hand.getConvexHull().draw();
+  
+//   int d = 0;
+//   fill(0,255,255);
+   
+//   for(PVector p : fingerPoints){
+//     ellipse(p.x,p.y, 5, 5);
+//     textSize(32);
+//     text(""+d,p.x,p.y);
+//     d++;
+//     if(gFlag == 2){
+//       text("next",p.x,p.y);
+//     }else if(gFlag==3){
+//       text("pre",p.x,p.y);
+//       }
+//   } 
+//   stroke(0,0,0);
+//   fill(255,255,0);
+//   for(PVector p : defectPoints){
+//     ellipse(p.x,p.y, 10, 10);
+     
+//   }
+   
+//   if(flag ==1){
+//     stroke(255,255,255);
+//     fill(255,255,255);
+//     rect(640,300,20,20);
+//   }
+   
+//   fill(0,255,0);
+//   stroke(0,255,0);
+//   ellipse(hullCenter.x, hullCenter.y, 5, 5);
+//}
